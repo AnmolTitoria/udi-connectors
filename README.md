@@ -11,14 +11,17 @@ over an HTTP API.
 
 ## Connectors
 
-| Type | Kind | Module |
-|---|---|---|
-| PostgreSQL | source | `udi_connectors.postgresql` |
-| MongoDB | source | `udi_connectors.mongodb` |
-| SQL (MySQL/MSSQL/Oracle/SQLite via SQLAlchemy) | source | `udi_connectors.sql` |
-| File upload | source | `udi_connectors.file_upload` |
-| Amazon Athena | source | `udi_connectors.athena` |
-| S3 | target | `udi_connectors.s3` |
+Each connector has its own README covering its config fields, behavior, and
+failure modes:
+
+| Type | Kind | Module | Docs |
+|---|---|---|---|
+| PostgreSQL | source | `udi_connectors.postgresql` | [README](src/udi_connectors/postgresql/README.md) |
+| MongoDB | source | `udi_connectors.mongodb` | [README](src/udi_connectors/mongodb/README.md) |
+| SQL (MySQL/MSSQL/Oracle/SQLite via SQLAlchemy) | source | `udi_connectors.sql` | [README](src/udi_connectors/sql/README.md) |
+| File upload | source | `udi_connectors.file_upload` | [README](src/udi_connectors/file_upload/README.md) |
+| Amazon Athena | source | `udi_connectors.athena` | [README](src/udi_connectors/athena/README.md) |
+| S3 | source + target | `udi_connectors.s3` | [README](src/udi_connectors/s3/README.md) |
 
 ## Install (editable, for local dev alongside udi-packages)
 
