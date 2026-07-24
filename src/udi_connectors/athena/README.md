@@ -20,12 +20,20 @@ in Glue.
 | `database` | `str` | — | **required** — Glue database to query |
 | `workgroup` | `str` | `"primary"` | Verified with `get_work_group` on connect |
 | `output_location` | `str \| None` | `None` | S3 path for query results; required unless the workgroup has a default result configuration |
-| `access_key` / `secret_key` / `session_token` | `str \| None` | `None` | Omit to fall back to the default boto3 credential chain (IAM role, env vars, `~/.aws/credentials`) |
+| `access_key` / `secret_key` / `session_token` | `str \| None` | `None` | Omit to fall back to the default boto3 credential chain (IAM role, env vars, `~/.aws/credentials`) — **not** a `SecretStr`, no protection against these leaking into a `repr()`/log of the config object |
 | `batch_size` | `int` | `1000` | Rows per `Batch` yielded from `extract()` |
 | `poll_interval` | `float` | `1.0` | Seconds between query-status polls |
 | `max_poll_attempts` | `int` | `300` | Query is treated as timed out after this many polls |
 | `incremental_column` | `str \| None` | `None` | Adds `ORDER BY <col>` and, with a checkpoint, `WHERE <col> > <last>` |
 | `checkpoint_file` | `str \| None` | `None` | Path to a `CheckpointFile` used to resume incremental extracts |
+
+As with every connector, once a connection using these credentials is saved
+through `udi-etl-app`'s API, `secret_key`/`session_token` are encrypted at
+rest with an app-level key before being written to the metadata database
+(`access_key` is not, since it isn't sensitive on its own) — see that
+repo's `docs/ARCHITECTURE.md` for the current state of credential storage.
+Prefer an IAM role or the default credential chain over
+`access_key`/`secret_key` where possible.
 
 ## Example
 

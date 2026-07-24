@@ -24,6 +24,16 @@ driver; can be switched to synchronous `pymongo` by constructing
 | `checkpoint_file` | `str \| None` | `None` | Path to a `CheckpointFile` used with `incremental_field` |
 | `read_preference` | `"primary" \| "secondary" \| "nearest"` | `"primary"` | |
 
+`connection_string` is a plain `str`, typically embedding credentials
+directly (`mongodb://user:pass@host`). Unlike the `postgresql`/`sql`
+connectors' `password` field, it's **not** a pydantic `SecretStr`, so
+there's no protection against it showing up in a `repr()`/log of this
+in-memory config object — be careful what you log. Separately, once a
+connection is saved through `udi-etl-app`'s API, `connection_string` is one
+of the fields encrypted at rest with an app-level key before being written
+to the metadata database — see that repo's `docs/ARCHITECTURE.md` for the
+current state of credential storage.
+
 ## Example
 
 ```json

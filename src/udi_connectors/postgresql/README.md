@@ -31,6 +31,15 @@ For MySQL/MSSQL/Oracle/SQLite (or Postgres via SQLAlchemy instead of native
 | `incremental_column` | `str \| None` | `None` | Adds `ORDER BY <col>` and, with a checkpoint, `WHERE <col> > <last>` |
 | `checkpoint_file` | `str \| None` | `None` | |
 
+`password` being `SecretStr` only keeps it out of `repr()`/log output for
+this in-memory config object — it is **not** encryption on its own. Callers
+still get the raw value via `.get_secret_value()` (see `connection_string`
+in `config.py`). Separately, once a connection is saved through
+`udi-etl-app`'s API, its config (including this field) is encrypted at rest
+with an app-level key before being written to the metadata database — see
+that repo's `docs/ARCHITECTURE.md` for the current state of credential
+storage.
+
 ## Example
 
 ```json

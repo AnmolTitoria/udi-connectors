@@ -20,7 +20,7 @@ path).
 | `prefix` | `str` | `""` | Root prefix under the bucket |
 | `region` | `str` | `"us-east-1"` | |
 | `endpoint_url` | `str \| None` | `None` | For S3-compatible stores (MinIO, etc.) |
-| `access_key` / `secret_key` / `session_token` | `str \| None` | `None` | Falls back to the default boto3 credential chain |
+| `access_key` / `secret_key` / `session_token` | `str \| None` | `None` | Falls back to the default boto3 credential chain — **not** a `SecretStr`, no protection against these leaking into a `repr()`/log of the config object |
 | `file_format` | `parquet\|csv\|jsonl` | `"parquet"` | |
 | `compression` | `snappy\|gzip\|none` | `"snappy"` | Ignored for parquet (compression is set on the Parquet writer directly) |
 | `batch_size` | `int` | `100000` | Used to chunk upsert merges into files |
@@ -30,6 +30,14 @@ path).
 | `zone` | `raw\|curated` | `"raw"` | Default zone when a batch doesn't carry its own via `BatchMetadata.zone` |
 | `incremental_column` | `str \| None` | `None` | Unused by the S3 source reader today (no native cursor) |
 | `checkpoint_file` | `str \| None` | `None` | |
+
+As with every connector, once a connection using these credentials is saved
+through `udi-etl-app`'s API, `secret_key`/`session_token` are encrypted at
+rest with an app-level key before being written to the metadata database
+(`access_key` is not, since it isn't sensitive on its own) — see that
+repo's `docs/ARCHITECTURE.md` for the current state of credential storage.
+Prefer an IAM role or the default credential chain over
+`access_key`/`secret_key` where possible.
 
 ## Example
 
