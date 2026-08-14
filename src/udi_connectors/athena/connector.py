@@ -45,7 +45,7 @@ _HIVE_TYPE_MAP: dict[str, pa.DataType] = {
 }
 
 
-@Source("athena")
+@Source("athena", icon="query", category="Query Engines")
 class AthenaConnector:
     Config = AthenaConfig
 
@@ -250,10 +250,28 @@ class AthenaConnector:
             for i, col in enumerate(column_info)
         ]
 
+    def _dedupe_column_names(self, names: list[str]) -> list[str]:
+        """An unaliased `SELECT *` over a join commonly repeats a column name
+        (e.g. both sides have an `id`, or both carry the same partition
+        column) — Athena returns it positionally without complaint, but
+        pandas/pyarrow reject duplicate column labels outright. Suffix every
+        repeat so the batch still converts; callers that care about a
+        specific joined column should alias it in the query."""
+        seen: dict[str, int] = {}
+        deduped = []
+        for name in names:
+            if name not in seen:
+                seen[name] = 0
+                deduped.append(name)
+            else:
+                seen[name] += 1
+                deduped.append(f"{name}_{seen[name]}")
+        return deduped
+
     def _rows_to_batch(
         self, rows: list[dict], column_info: list[dict], table_name: str, batch_num: int
     ) -> Batch:
-        col_names = [c["Name"] for c in column_info]
+        col_names = self._dedupe_column_names([c["Name"] for c in column_info])
         records = [self._row_to_values(row, column_info) for row in rows]
         df = pd.DataFrame(records, columns=col_names)
         table = pa.Table.from_pandas(df)

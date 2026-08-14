@@ -41,7 +41,7 @@ TEXT_EXTENSIONS = frozenset({
 })
 
 
-@Source("file_upload")
+@Source("file_upload", icon="file", category="Files")
 class FileUploadConnector:
     Config = FileUploadConfig
 

@@ -24,8 +24,8 @@ from .config import S3Config
 logger = logging.getLogger(__name__)
 
 
-@Source("s3")
-@Target("s3")
+@Source("s3", icon="cloud", category="Cloud Storage")
+@Target("s3", icon="cloud", category="Cloud Storage")
 class S3Connector:
     """S3-backed data lake connector.
 
@@ -414,7 +414,12 @@ class S3Connector:
         config: S3Config,
         columns: list[str] | None = None,
         filter_predicate: str | None = None,
+        limit: int | None = None,
     ) -> ExtractResult:
+        """`limit`, when set, bounds total rows yielded across all batches —
+        used by the output-preview feature to sample a dataset without a
+        full scan. `None` (the default, and every existing caller's
+        behavior) reads everything, unchanged."""
         cfg = config or self._config
         if not cfg:
             raise ConnectorError("S3Connector is not connected", "s3", retryable=False)
@@ -425,10 +430,16 @@ class S3Connector:
         logger.info("Extracting from S3: table=%s zone=%s objects=%d", table_name, cfg.zone, len(keys))
 
         async def batch_generator() -> AsyncIterator[Batch]:
+            rows_yielded = 0
             for key in keys:
+                if limit is not None and rows_yielded >= limit:
+                    break
                 table = await self._read_object(key, cfg)
                 if columns:
                     table = table.select(columns)
+                if limit is not None and rows_yielded + table.num_rows > limit:
+                    table = table.slice(0, limit - rows_yielded)
+                rows_yielded += table.num_rows
                 yield Batch(
                     data=table,
                     metadata=BatchMetadata(

@@ -21,7 +21,7 @@ from .config import MongoDBConfig
 logger = logging.getLogger(__name__)
 
 
-@Source("mongodb")
+@Source("mongodb", icon="database", category="Databases")
 class MongoDBConnector:
     Config = MongoDBConfig
 

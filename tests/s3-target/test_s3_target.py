@@ -77,3 +77,38 @@ class TestS3Connector:
         result = await conn.load(empty_gen(), "empty")
         assert result.rows_loaded == 0
         assert result.batch_count == 0
+
+
+class TestExtractLimit:
+    async def test_extract_without_limit_reads_everything(self, conn, s3_bucket):
+        async def batch_gen():
+            for i in range(3):
+                yield _make_batch("orders", 5, i)
+
+        await conn.load(batch_gen(), "orders")
+
+        result = await conn.extract("orders", conn._config)
+        batches = [b async for b in result.batches]
+        assert sum(b.data.num_rows for b in batches) == 15
+
+    async def test_extract_with_limit_stops_early(self, conn, s3_bucket):
+        async def batch_gen():
+            for i in range(3):
+                yield _make_batch("orders", 5, i)
+
+        await conn.load(batch_gen(), "orders")
+
+        result = await conn.extract("orders", conn._config, limit=7)
+        batches = [b async for b in result.batches]
+        total = sum(b.data.num_rows for b in batches)
+        assert total == 7
+
+    async def test_extract_limit_larger_than_data_reads_everything(self, conn, s3_bucket):
+        async def batch_gen():
+            yield _make_batch("orders", 5)
+
+        await conn.load(batch_gen(), "orders")
+
+        result = await conn.extract("orders", conn._config, limit=100)
+        batches = [b async for b in result.batches]
+        assert sum(b.data.num_rows for b in batches) == 5

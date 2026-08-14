@@ -22,7 +22,7 @@ from .config import SQLConfig
 logger = logging.getLogger(__name__)
 
 
-@Source("sql")
+@Source("sql", icon="database", category="Databases")
 class SQLConnector:
     Config = SQLConfig
 

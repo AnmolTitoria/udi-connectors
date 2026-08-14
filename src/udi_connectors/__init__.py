@@ -2,7 +2,9 @@ from udi_connectors._registry import (
     create_source,
     create_target,
     get_source_class,
+    get_source_meta,
     get_target_class,
+    get_target_meta,
     list_sources,
     list_targets,
     load_plugin_dir,
@@ -28,6 +30,15 @@ from udi_connectors.pipeline import (
     publish_curated,
 )
 
+from udi_connectors.dag_compiler import (
+    CompiledPipeline,
+    DagCompileError,
+    LandStage,
+    PublishStage,
+    TransformStage,
+    compile_pipeline,
+)
+
 # Custom connectors: a packaged plugin registered under the
 # "udi_connectors.plugins" entry-point group, or a .py file dropped in
 # $UDI_CONNECTOR_PLUGINS_DIR — either way, it shows up in list_sources()/
@@ -41,6 +52,8 @@ __all__ = [
     "create_target",
     "get_source_class",
     "get_target_class",
+    "get_source_meta",
+    "get_target_meta",
     "register_source",
     "register_target",
     "list_sources",
@@ -55,4 +68,10 @@ __all__ = [
     "RuleTransform",
     "Transform",
     "PublishResult",
+    "compile_pipeline",
+    "CompiledPipeline",
+    "DagCompileError",
+    "LandStage",
+    "TransformStage",
+    "PublishStage",
 ]

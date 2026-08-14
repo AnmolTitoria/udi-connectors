@@ -9,37 +9,56 @@ from udi_packages import Batch, CheckpointFile, ConnectorError, LoadResult
 _sources: dict[str, type] = {}
 _targets: dict[str, type] = {}
 
+# Palette display metadata, keyed the same as _sources/_targets. Kept as a
+# side table rather than class attributes so a connector class registered as
+# both a Source and a Target (e.g. S3Connector) can carry different icon/
+# category info per role. `icon` is a key the frontend maps to a small
+# bundled icon set — not a URL, so nothing ever fetches an external asset.
+_source_meta: dict[str, dict] = {}
+_target_meta: dict[str, dict] = {}
+
+_DEFAULT_ICON = "table"
+_DEFAULT_CATEGORY = "General"
+
 logger = logging.getLogger(__name__)
 
 
 class Source:
-    def __init__(self, name: str):
+    def __init__(self, name: str, icon: str = _DEFAULT_ICON, category: str = _DEFAULT_CATEGORY):
         self._name = name
+        self._icon = icon
+        self._category = category
 
     def __call__(self, cls):
         _sources[self._name] = cls
+        _source_meta[self._name] = {"icon": self._icon, "category": self._category}
         return cls
 
 
 class Target:
-    def __init__(self, name: str):
+    def __init__(self, name: str, icon: str = _DEFAULT_ICON, category: str = _DEFAULT_CATEGORY):
         self._name = name
+        self._icon = icon
+        self._category = category
 
     def __call__(self, cls):
         _targets[self._name] = cls
+        _target_meta[self._name] = {"icon": self._icon, "category": self._category}
         return cls
 
 
-def register_source(name: str, connector_cls: type) -> None:
+def register_source(name: str, connector_cls: type, icon: str = _DEFAULT_ICON, category: str = _DEFAULT_CATEGORY) -> None:
     """Function-form equivalent of @Source(name) — for connectors that
     register themselves programmatically (e.g. a plugin loaded at runtime)
     rather than via the decorator at import time."""
     _sources[name] = connector_cls
+    _source_meta[name] = {"icon": icon, "category": category}
 
 
-def register_target(name: str, connector_cls: type) -> None:
+def register_target(name: str, connector_cls: type, icon: str = _DEFAULT_ICON, category: str = _DEFAULT_CATEGORY) -> None:
     """Function-form equivalent of @Target(name)."""
     _targets[name] = connector_cls
+    _target_meta[name] = {"icon": icon, "category": category}
 
 
 def get_source_class(name: str) -> type | None:
@@ -51,6 +70,17 @@ def get_source_class(name: str) -> type | None:
 
 def get_target_class(name: str) -> type | None:
     return _targets.get(name)
+
+
+def get_source_meta(name: str) -> dict:
+    """Palette icon/category for a source — a default for connectors that
+    didn't pass icon/category to @Source (built-in or custom alike), never
+    None, so callers don't need a fallback branch."""
+    return _source_meta.get(name, {"icon": _DEFAULT_ICON, "category": _DEFAULT_CATEGORY})
+
+
+def get_target_meta(name: str) -> dict:
+    return _target_meta.get(name, {"icon": _DEFAULT_ICON, "category": _DEFAULT_CATEGORY})
 
 
 def load_plugins(group: str = "udi_connectors.plugins") -> list[str]:

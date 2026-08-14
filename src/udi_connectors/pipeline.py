@@ -137,12 +137,20 @@ async def migrate_raw_to_curated(
     source_kwargs: dict | None = None,
     target_kwargs: dict | None = None,
     batch_size: int | None = None,
+    source_table_name: str | None = None,
 ) -> LoadResult:
     """Read the raw zone (Athena SQL, or the direct S3 reader as a fallback),
     apply `transform`, and land the result in curated/.../_staging/, rechunked
-    to whatever the curated S3 target can accept."""
+    to whatever the curated S3 target can accept.
+
+    `source_table_name` lets the raw-zone table read from differ from
+    `table_name` (which names the curated output) — e.g. a plain rename
+    passthrough with no other transform. Defaults to `table_name`, which
+    preserves every existing caller's behavior (read and output name always
+    matched before this was added)."""
     source_kwargs = dict(source_kwargs or {})
     target_kwargs = dict(target_kwargs or {})
+    source_table_name = source_table_name or table_name
 
     if isinstance(transform, SqlTransform) and source_type != "athena":
         raise ConnectorError(
@@ -163,8 +171,8 @@ async def migrate_raw_to_curated(
 
     staging_table = f"{table_name}{_STAGING_SUFFIX}"
     logger.info(
-        "Stage 2 transform started: connection=%s table=%s source=%s transform=%s",
-        connection_id, table_name, source_type, type(transform).__name__ if transform else None,
+        "Stage 2 transform started: connection=%s source_table=%s output_table=%s source=%s transform=%s",
+        connection_id, source_table_name, table_name, source_type, type(transform).__name__ if transform else None,
     )
 
     await src.connect(src_cfg)
@@ -175,9 +183,9 @@ async def migrate_raw_to_curated(
 
     try:
         if isinstance(transform, SqlTransform):
-            result = await src.extract_sql(transform.sql, table_name)
+            result = await src.extract_sql(transform.sql, source_table_name)
         else:
-            result = await src.extract(table_name, src_cfg)
+            result = await src.extract(source_table_name, src_cfg)
 
         async def transformed() -> AsyncIterator[Batch]:
             async for batch in result.batches:

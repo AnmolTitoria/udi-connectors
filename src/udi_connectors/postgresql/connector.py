@@ -26,7 +26,7 @@ def _fix_windows_event_loop():
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
-@Source("postgresql")
+@Source("postgresql", icon="database", category="Databases")
 class PostgreSQLConnector:
     Config = PostgreSQLConfig
 
