@@ -79,6 +79,74 @@ class TestS3Connector:
         assert result.batch_count == 0
 
 
+class TestXlsxFormat:
+    async def test_xlsx_round_trip(self, s3_bucket, s3_region):
+        c = S3Connector()
+        await c.connect(S3Config(bucket_name=s3_bucket, region=s3_region, file_format="xlsx"))
+        try:
+            batch = _make_batch("people", 5)
+
+            async def batch_gen():
+                yield batch
+
+            result = await c.load(batch_gen(), "people")
+            assert result.rows_loaded == 5
+            assert len(result.errors) == 0
+
+            extracted = await c.extract("people", c._config)
+            batches = [b async for b in extracted.batches]
+            assert sum(b.data.num_rows for b in batches) == 5
+            assert batches[0].data.schema.names == ["id", "name"]
+        finally:
+            await c.disconnect()
+
+    async def test_xlsx_with_timezone_aware_datetime_column(self, s3_bucket, s3_region):
+        c = S3Connector()
+        await c.connect(S3Config(bucket_name=s3_bucket, region=s3_region, file_format="xlsx"))
+        try:
+            import pandas as pd
+            df = pd.DataFrame({
+                "id": [1, 2],
+                "created_at": pd.to_datetime(["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"]),
+            })
+            table = pa.Table.from_pandas(df)
+            batch = Batch(
+                data=table,
+                metadata=BatchMetadata(
+                    source_name="test",
+                    table_name="events",
+                    batch_id="events_0",
+                    row_count=2,
+                    byte_size=table.nbytes,
+                    schema=table.schema,
+                ),
+            )
+
+            async def batch_gen():
+                yield batch
+
+            result = await c.load(batch_gen(), "events")
+            assert result.rows_loaded == 2
+            assert len(result.errors) == 0
+        finally:
+            await c.disconnect()
+
+    async def test_read_columns_from_existing_xlsx_template(self, conn, s3_bucket):
+        batch = _make_batch("template", 3)
+
+        async def batch_gen():
+            yield batch
+
+        conn._config.file_format = "xlsx"
+        await conn.load(batch_gen(), "template")
+
+        keys = await conn._list_object_keys("template", conn._config)
+        assert len(keys) == 1
+
+        columns = await conn.read_columns(keys[0])
+        assert columns == ["id", "name"]
+
+
 class TestExtractLimit:
     async def test_extract_without_limit_reads_everything(self, conn, s3_bucket):
         async def batch_gen():

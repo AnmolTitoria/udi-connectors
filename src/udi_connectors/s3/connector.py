@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator
 from io import BytesIO
 from pathlib import PurePosixPath
@@ -124,7 +125,9 @@ class S3Connector:
             key += ".csv"
         elif config.file_format == "jsonl":
             key += ".jsonl"
-        if config.compression != "none" and config.file_format != "parquet":
+        elif config.file_format == "xlsx":
+            key += ".xlsx"
+        if config.compression != "none" and config.file_format not in ("parquet", "xlsx"):
             ext = ".gz" if config.compression == "gzip" else ".snappy"
             key += ext
         return key
@@ -144,6 +147,9 @@ class S3Connector:
             raise ConnectorError("S3Connector is not connected", "s3", retryable=False)
 
         config = self._config
+
+        if config.template_key and config.file_format in ("csv", "xlsx"):
+            return await self._load_template_merge(batches, table_name, config, merge_keys)
 
         if mode == "upsert":
             return await self._load_upsert(batches, table_name, config, merge_keys or [])
@@ -264,6 +270,120 @@ class S3Connector:
         merged_df = pd.concat([remaining, incoming_df], ignore_index=True, sort=False)
         return pa.Table.from_pandas(merged_df, preserve_index=False)
 
+    # ------------------------------------------------------------------
+    # Target: template mode — merge into a single existing file in place
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _humanize_column(name: str) -> str:
+        return re.sub(r"[_\-]+", " ", name).strip().title()
+
+    def _df_from_bytes(self, raw: bytes, file_format: str) -> pd.DataFrame:
+        buf = BytesIO(raw)
+        if file_format == "csv":
+            return pd.read_csv(buf)
+        return pd.read_excel(buf, engine="openpyxl")
+
+    def _df_to_bytes(self, df: pd.DataFrame, file_format: str) -> BytesIO:
+        buf = BytesIO()
+        if file_format == "csv":
+            df.to_csv(buf, index=False)
+        else:
+            df.to_excel(buf, index=False, engine="openpyxl")
+        buf.seek(0)
+        return buf
+
+    async def _get_object_bytes(self, key: str, config: S3Config) -> bytes | None:
+        loop = asyncio.get_running_loop()
+
+        def _get() -> bytes | None:
+            try:
+                resp = self._client.get_object(Bucket=config.bucket_name, Key=key)
+                return resp["Body"].read()
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+                    return None
+                raise
+
+        return await loop.run_in_executor(None, _get)
+
+    async def _read_template(
+        self, config: S3Config
+    ) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+        """Returns (label_rows, data_rows) for the existing template at
+        config.template_key, or (None, None) if it doesn't exist yet — a
+        fresh template gets no label rows (there's nothing to preserve) and
+        starts from an empty data set."""
+        raw = await self._get_object_bytes(config.template_key, config)
+        if raw is None:
+            return None, None
+        df = self._df_from_bytes(raw, config.file_format)
+        n = config.template_label_rows
+        if n <= 0:
+            return None, df
+        return df.iloc[:n].reset_index(drop=True), df.iloc[n:].reset_index(drop=True)
+
+    async def _load_template_merge(
+        self,
+        batches: AsyncIterator[Batch],
+        table_name: str,
+        config: S3Config,
+        merge_keys: list[str] | None,
+    ) -> LoadResult:
+        incoming_tables = [batch.data async for batch in batches]
+        if not incoming_tables:
+            return LoadResult(destination_type="s3", table_name=table_name, rows_loaded=0, batch_count=0, errors=[])
+        incoming_df = pa.concat_tables(incoming_tables, promote_options="default").to_pandas()
+
+        label_rows, existing_df = await self._read_template(config)
+        existing_columns = list(existing_df.columns) if existing_df is not None else []
+
+        # Column-wise growth: union existing + incoming columns so a field
+        # neither side has yet doesn't get silently dropped, and rows that
+        # predate a new column just read blank for it.
+        all_columns = list(dict.fromkeys(existing_columns + list(incoming_df.columns)))
+        incoming_df = incoming_df.reindex(columns=all_columns)
+        if existing_df is not None:
+            existing_df = existing_df.reindex(columns=all_columns)
+
+        if merge_keys and existing_df is not None and not existing_df.empty:
+            remaining = existing_df[~existing_df.set_index(merge_keys).index.isin(incoming_df.set_index(merge_keys).index)]
+            merged_df = pd.concat([remaining, incoming_df], ignore_index=True, sort=False)
+        elif existing_df is not None:
+            merged_df = pd.concat([existing_df, incoming_df], ignore_index=True, sort=False)
+        else:
+            merged_df = incoming_df
+
+        if label_rows is not None:
+            label_rows = label_rows.reindex(columns=all_columns)
+            new_columns = [c for c in all_columns if c not in existing_columns]
+            for col in new_columns:
+                label_rows[col] = label_rows[col].fillna(self._humanize_column(col))
+            final_df = pd.concat([label_rows, merged_df], ignore_index=True, sort=False)
+        else:
+            final_df = merged_df
+
+        buf = self._df_to_bytes(final_df, config.file_format)
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: self._client.put_object(Bucket=config.bucket_name, Key=config.template_key, Body=buf.getvalue())
+        )
+
+        logger.info(
+            "S3 template merge complete: key=%s existing=%d incoming=%d merged=%d columns=%d",
+            config.template_key,
+            existing_df.shape[0] if existing_df is not None else 0,
+            incoming_df.shape[0],
+            merged_df.shape[0],
+            len(all_columns),
+        )
+        return LoadResult(
+            destination_type="s3",
+            table_name=table_name,
+            rows_loaded=int(incoming_df.shape[0]),
+            batch_count=1,
+            errors=[],
+        )
+
     async def _upload_batch_with_semaphore(
         self,
         semaphore: asyncio.Semaphore,
@@ -317,6 +437,13 @@ class S3Connector:
         elif file_format == "jsonl":
             import pyarrow.json as pj
             pj.write_json(table, buf)
+        elif file_format == "xlsx":
+            df = table.to_pandas()
+            # Excel has no concept of a timezone-aware datetime — openpyxl
+            # raises on write otherwise. Normalize to UTC, then drop tzinfo.
+            for col in df.select_dtypes(include=["datetimetz"]).columns:
+                df[col] = df[col].dt.tz_convert("UTC").dt.tz_localize(None)
+            df.to_excel(buf, index=False, engine="openpyxl")
         else:
             raise ConnectorError(
                 f"Unsupported file format: {file_format}", "s3", retryable=False
@@ -361,6 +488,37 @@ class S3Connector:
             lambda: self._client.list_objects_v2(Bucket=config.bucket_name, Prefix=prefix, MaxKeys=1),
         )
         return resp.get("KeyCount", 0) > 0
+
+    async def read_columns(self, key: str) -> list[str]:
+        """Column names of a single existing object at `key` (e.g. an Excel
+        template already sitting in the destination bucket) — used by the
+        transform step's template-mapping UI to offer real target column
+        names as rename targets, without a full extract. Format is sniffed
+        from the key's own extension rather than config.file_format, since a
+        template can be a different format than what this connector is
+        about to write.
+        """
+        if not self._client or not self._config:
+            raise ConnectorError("S3Connector is not connected", "s3", retryable=False)
+        config = self._config
+        loop = asyncio.get_running_loop()
+
+        def _get() -> bytes:
+            resp = self._client.get_object(Bucket=config.bucket_name, Key=key)
+            return resp["Body"].read()
+
+        try:
+            raw = await loop.run_in_executor(None, _get)
+        except ClientError as e:
+            raise ConnectorError(f"Failed to read {key}: {e}", "s3", retryable=False) from e
+
+        suffix = PurePosixPath(key).suffix.lstrip(".").lower()
+        fmt = {"json": "jsonl"}.get(suffix, suffix)
+        if fmt not in ("parquet", "csv", "jsonl", "xlsx"):
+            fmt = config.file_format
+
+        table = self._deserialize(raw, fmt)
+        return list(table.schema.names)
 
     async def get_schema(self, table_name: str) -> pa.Schema | None:
         if not self._client or not self._config:
@@ -502,6 +660,9 @@ class S3Connector:
         elif file_format == "jsonl":
             import pyarrow.json as pj
             return pj.read_json(buf)
+        elif file_format == "xlsx":
+            df = pd.read_excel(buf, engine="openpyxl")
+            return pa.Table.from_pandas(df, preserve_index=False)
         raise ConnectorError(f"Unsupported file format: {file_format}", "s3", retryable=False)
 
     async def _delete_objects(self, keys: list[str], config: S3Config) -> None:

@@ -20,6 +20,7 @@ import udi_connectors.sql
 import udi_connectors.s3
 import udi_connectors.file_upload
 import udi_connectors.athena
+import udi_connectors.prompt_data
 
 from udi_connectors.pipeline import (
     PublishResult,

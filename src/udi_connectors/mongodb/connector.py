@@ -113,17 +113,30 @@ class MongoDBConnector:
         return pa.Table.from_pandas(df).schema
 
     @staticmethod
-    def _serialize_doc(doc: dict) -> dict:
-        result = {}
+    def _serialize_doc(doc: dict, prefix: str = "") -> dict:
+        """Flattens nested objects into dotted-path keys ("address.city")
+        so they're addressable as ordinary columns — see
+        udi-connectors/docs/JSON_SOURCE_KEYS_ARCHITECTURE.md. A flat
+        document (no nested dicts) is unaffected: prefix stays empty, so
+        every key comes out exactly as it went in, same as before this
+        flattened nested ones instead of keeping them as a struct value.
+
+        Arrays are kept as one stringified column rather than exploded into
+        rows — an array field changes cardinality per document, which every
+        downstream consumer (joins, filter_query, sort_by, row-wise cell
+        growth in the Export flow) assumes stays 1:1 with the source doc.
+        """
+        result: dict = {}
         for key, val in doc.items():
+            full_key = f"{prefix}{key}"
             if val is None:
-                result[key] = None
+                result[full_key] = None
             elif isinstance(val, dict):
-                result[key] = MongoDBConnector._serialize_doc(val)
+                result.update(MongoDBConnector._serialize_doc(val, prefix=f"{full_key}."))
             elif isinstance(val, list):
-                result[key] = str([MongoDBConnector._serialize_doc(v) if isinstance(v, dict) else v for v in val])
+                result[full_key] = str([MongoDBConnector._serialize_doc(v) if isinstance(v, dict) else v for v in val])
             else:
-                result[key] = str(val)
+                result[full_key] = str(val)
         return result
 
     def _get_database(self):

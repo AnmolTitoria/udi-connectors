@@ -15,7 +15,7 @@ class S3Config(BaseConfig):
     secret_key: str | None = None
     session_token: str | None = None
 
-    file_format: Literal["parquet", "csv", "jsonl"] = "parquet"
+    file_format: Literal["parquet", "csv", "jsonl", "xlsx"] = "parquet"
     compression: Literal["snappy", "gzip", "none"] = "snappy"
 
     batch_size: int = 100_000
@@ -32,3 +32,19 @@ class S3Config(BaseConfig):
 
     incremental_column: str | None = None
     checkpoint_file: str | None = None
+
+    # Template mode: instead of landing each load as a new object under the
+    # table's prefix (the data-lake-style default above), read the existing
+    # object at this key back, merge the incoming batches into it (new rows
+    # appended/upserted, new columns unioned in with blanks for rows that
+    # predate them), and rewrite that single key in place — for a
+    # hand-maintained import template (csv/xlsx) meant to be opened as one
+    # growing file rather than a folder of part-files. Only file_format
+    # "csv"/"xlsx" support this; other formats ignore it.
+    template_key: str | None = None
+    # Number of rows immediately below the header that are fixed label/
+    # metadata rows (e.g. a human-readable-label row under a machine-key
+    # header row) rather than real data — preserved verbatim on every
+    # write, and never matched against merge_keys. 0 (default) means the
+    # header is the only non-data row, unchanged from prior behavior.
+    template_label_rows: int = 0
